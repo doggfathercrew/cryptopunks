@@ -7,7 +7,6 @@
   <meta name="description" content="Track the valuation of non-rare CryptoPunks relative to Bitcoin over time">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-adapter-date-fns/3.0.0/chartjs-adapter-date-fns.bundle.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -326,20 +325,23 @@
 
       const ctx = document.getElementById('mainChart').getContext('2d');
 
-      const ratioData = weeklyData
-        .filter(w => w.ratio > 0)
-        .map(w => {
-          const lowerCount = allRatios.filter(r => r < w.ratio).length;
-          const percentile = (lowerCount / allRatios.length) * 100;
-          return { 
-            x: w.week_start, 
-            y: w.ratio, 
-            salesCount: w.sales_count,
-            percentile: percentile
-          };
-        });
+      const filteredData = weeklyData.filter(w => w.ratio > 0);
+      
+      // Create labels and data
+      const labels = filteredData.map(w => {
+        const date = new Date(w.week_start);
+        return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      });
+      
+      const ratioValues = filteredData.map(w => w.ratio);
+      
+      // Calculate percentiles for colors
+      const percentiles = filteredData.map(w => {
+        const lowerCount = allRatios.filter(r => r < w.ratio).length;
+        return (lowerCount / allRatios.length) * 100;
+      });
 
-      const avgRatio = ratioData.reduce((sum, d) => sum + d.y, 0) / ratioData.length;
+      const avgRatio = ratioValues.reduce((sum, r) => sum + r, 0) / ratioValues.length;
 
       function getColorForPercentile(pct) {
         if (pct <= 20) return '#22c55e';
@@ -349,53 +351,32 @@
         return '#ef4444';
       }
 
-      function getColorForPercentileAlpha(pct, alpha) {
-        if (pct <= 20) return `rgba(34, 197, 94, ${alpha})`;
-        if (pct <= 40) return `rgba(132, 204, 22, ${alpha})`;
-        if (pct <= 60) return `rgba(234, 179, 8, ${alpha})`;
-        if (pct <= 80) return `rgba(249, 115, 22, ${alpha})`;
-        return `rgba(239, 68, 68, ${alpha})`;
-      }
-
-      const segmentColors = ratioData.map(d => getColorForPercentile(d.percentile));
-      const segmentColorsAlpha = ratioData.map(d => getColorForPercentileAlpha(d.percentile, 0.4));
+      const pointColors = percentiles.map(p => getColorForPercentile(p));
 
       chartInstance = new Chart(ctx, {
         type: 'line',
         data: {
+          labels: labels,
           datasets: [
             {
               label: 'Punk/BTC Ratio',
-              data: ratioData,
-              segment: {
-                borderColor: ctx => segmentColors[ctx.p0DataIndex] || '#a78bfa',
-                backgroundColor: ctx => segmentColorsAlpha[ctx.p0DataIndex] || 'rgba(167, 139, 250, 0.3)'
-              },
-              borderColor: segmentColors,
-              backgroundColor: function(context) {
-                const chart = context.chart;
-                const {ctx: canvasCtx, chartArea} = chart;
-                if (!chartArea) return 'rgba(167, 139, 250, 0.2)';
-                
-                const gradient = canvasCtx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-                gradient.addColorStop(0, 'rgba(34, 197, 94, 0.3)');
-                gradient.addColorStop(0.25, 'rgba(132, 204, 22, 0.3)');
-                gradient.addColorStop(0.5, 'rgba(234, 179, 8, 0.3)');
-                gradient.addColorStop(0.75, 'rgba(249, 115, 22, 0.3)');
-                gradient.addColorStop(1, 'rgba(239, 68, 68, 0.3)');
-                return gradient;
-              },
+              data: ratioValues,
+              borderColor: '#a78bfa',
+              backgroundColor: 'rgba(167, 139, 250, 0.2)',
               fill: true,
               tension: 0.1,
               borderWidth: 2,
               pointRadius: 3,
               pointHoverRadius: 6,
-              pointBackgroundColor: segmentColors,
-              pointBorderColor: segmentColors,
+              pointBackgroundColor: pointColors,
+              pointBorderColor: pointColors,
+              segment: {
+                borderColor: ctx => pointColors[ctx.p0DataIndex] || '#a78bfa'
+              }
             },
             {
               label: 'Average',
-              data: ratioData.map(d => ({ x: d.x, y: avgRatio })),
+              data: new Array(ratioValues.length).fill(avgRatio),
               borderColor: 'rgba(148, 163, 184, 0.5)',
               borderWidth: 1,
               borderDash: [5, 5],
@@ -410,10 +391,11 @@
           interaction: { intersect: false, mode: 'index' },
           scales: {
             x: {
-              type: 'time',
-              time: { unit: 'month', displayFormats: { month: 'MMM \'yy' } },
               grid: { color: 'rgba(255, 255, 255, 0.05)' },
-              ticks: { color: '#64748b' },
+              ticks: { 
+                color: '#64748b',
+                maxTicksLimit: 12
+              },
               title: { display: true, text: 'Date', color: '#94a3b8' }
             },
             y: {
@@ -433,22 +415,15 @@
               borderWidth: 1,
               padding: 12,
               callbacks: {
-                title: function(items) {
-                  if (items[0]) {
-                    return new Date(items[0].parsed.x).toLocaleDateString('en-US', { 
-                      year: 'numeric', month: 'short', day: 'numeric' 
-                    });
-                  }
-                  return '';
-                },
                 label: function(context) {
+                  const idx = context.dataIndex;
                   if (context.datasetIndex === 1) return `Average: ${context.parsed.y.toFixed(3)}`;
-                  const point = context.raw;
-                  const pctLabel = point.percentile.toFixed(1);
+                  const pct = percentiles[idx].toFixed(1);
+                  const sales = filteredData[idx].sales_count;
                   return [
                     `Ratio: ${context.parsed.y.toFixed(3)}`,
-                    `Percentile: ${pctLabel}%`,
-                    `Sales: ${point.salesCount}`
+                    `Percentile: ${pct}%`,
+                    `Sales: ${sales}`
                   ];
                 }
               }
