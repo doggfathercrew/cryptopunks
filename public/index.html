@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CryptoPunk / Bitcoin Ratio</title>
+  <meta name="description" content="Track the valuation of non-rare CryptoPunks relative to Bitcoin over time">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
+      min-height: 100vh;
+      padding: 32px;
+      color: #e2e8f0;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { text-align: center; margin-bottom: 32px; }
+    .header h1 {
+      font-size: 48px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .stat-card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 20px;
+      text-align: center;
+    }
+    .stat-label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    .stat-value { font-size: 24px; font-weight: 700; color: #ffffff; }
+    
+    .chart-container {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 24px;
+    }
+    .chart-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
+    .chart-title { font-size: 20px; font-weight: 600; }
+    .chart-subtitle { font-size: 13px; color: #94a3b8; margin-top: 4px; }
+    .chart-wrapper { position: relative; height: 450px; }
+    
+    .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px; text-align: center; }
+    .spinner { width: 48px; height: 48px; border: 4px solid rgba(255, 255, 255, 0.1); border-top-color: #6366F1; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    
+    .error-box { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; padding: 20px; text-align: center; color: #f87171; }
+    
+    .insight-box { 
+      background: rgba(255, 255, 255, 0.05); 
+      border: 1px solid rgba(255, 255, 255, 0.1); 
+      border-radius: 16px; 
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .insight-title { font-size: 16px; font-weight: 600; color: #a5b4fc; margin-bottom: 12px; }
+    .insight-text { font-size: 14px; color: #c7d2fe; line-height: 1.7; }
+    
+    .bottom-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    .bottom-row .gauge-container {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .bottom-row .insight-box {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    
+    .gauge-container {
+      padding: 24px 48px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+    }
+    .gauge-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #94a3b8;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .gauge-svg {
+      width: 200px;
+      height: 120px;
+    }
+    .gauge-svg #gauge-needle {
+      transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .gauge-value-container {
+      text-align: center;
+      margin-top: 8px;
+    }
+    .gauge-value {
+      font-size: 48px;
+      font-weight: 800;
+      line-height: 1;
+    }
+    .gauge-value.bargain { color: #22c55e; }
+    .gauge-value.modest { color: #84cc16; }
+    .gauge-value.fair { color: #eab308; }
+    .gauge-value.pricy { color: #f97316; }
+    .gauge-value.inflated { color: #ef4444; }
+    
+    .footer { text-align: center; margin-top: 40px; padding-top: 24px; border-top: 1px solid rgba(255, 255, 255, 0.1); color: #64748b; font-size: 13px; }
+    .footer a { color: #a5b4fc; text-decoration: none; transition: color 0.2s; }
+    .footer a:hover { color: #c4b5fd; }
+    .last-updated { font-size: 11px; color: #475569; margin-top: 8px; }
+
+    @media (max-width: 768px) {
+      body { padding: 16px; }
+      .header h1 { font-size: 32px; }
+      .bottom-row { grid-template-columns: 1fr; }
+      .chart-wrapper { height: 300px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>CryptoPunk / Bitcoin Ratio</h1>
+    </div>
+
+    <div id="stats-grid" class="stats-grid" style="display: none;">
+      <div class="stat-card">
+        <div class="stat-label">Current Ratio</div>
+        <div class="stat-value" id="current-ratio">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">All-Time High</div>
+        <div class="stat-value" id="ath-ratio">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">All-Time Low</div>
+        <div class="stat-value" id="atl-ratio">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Average</div>
+        <div class="stat-value" id="avg-ratio">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Weeks of Data</div>
+        <div class="stat-value" id="weeks-count">—</div>
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <div id="loading" class="loading-container">
+        <div class="spinner"></div>
+        <div>Loading data...</div>
+      </div>
+
+      <div id="error-state" class="error-box" style="display: none;">
+        <p>Failed to load data. Please try again later.</p>
+      </div>
+
+      <div id="chart-area" style="display: none;">
+        <div class="chart-header">
+          <div>
+            <div class="chart-title">Weekly Median Punk / BTC Ratio</div>
+            <div class="chart-subtitle">Non-rare punk median sale price (USD) ÷ BTC price (USD)</div>
+          </div>
+        </div>
+        
+        <div class="chart-wrapper">
+          <canvas id="mainChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="bottom-row" class="bottom-row" style="display: none;">
+      <div class="gauge-container" id="sentiment-gauge">
+        <div class="gauge-title">CryptoPunks Valuation Index</div>
+        <svg viewBox="0 0 200 120" class="gauge-svg">
+          <defs>
+            <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" style="stop-color:#22c55e"/>
+              <stop offset="25%" style="stop-color:#84cc16"/>
+              <stop offset="50%" style="stop-color:#eab308"/>
+              <stop offset="75%" style="stop-color:#f97316"/>
+              <stop offset="100%" style="stop-color:#ef4444"/>
+            </linearGradient>
+          </defs>
+          
+          <path d="M 20 100 A 80 80 0 0 1 180 100" 
+                fill="none" 
+                stroke="url(#gaugeGradient)" 
+                stroke-width="12"
+                stroke-linecap="round"/>
+          
+          <line x1="100" y1="20" x2="100" y2="28" stroke="#1a1a2e" stroke-width="2"/>
+          <line x1="43" y1="43" x2="49" y2="49" stroke="#1a1a2e" stroke-width="2"/>
+          <line x1="157" y1="43" x2="151" y2="49" stroke="#1a1a2e" stroke-width="2"/>
+          
+          <g id="gauge-needle" transform="rotate(-90, 100, 100)">
+            <circle cx="100" cy="100" r="6" fill="#f8fafc"/>
+            <line x1="100" y1="100" x2="100" y2="35" stroke="#f8fafc" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="100" cy="35" r="4" fill="#f8fafc"/>
+          </g>
+        </svg>
+        
+        <div class="gauge-value-container">
+          <div class="gauge-value" id="gauge-value">—</div>
+        </div>
+      </div>
+
+      <div id="insight" class="insight-box">
+        <div class="insight-title">📊 How to Read This Chart</div>
+        <div class="insight-text">
+          The <strong>Punk/BTC Ratio</strong> shows how expensive a median non-rare CryptoPunk is relative to Bitcoin.<br><br>
+          <strong>Percentile:</strong> What % of all weeks since Oct 2021 had a lower ratio.<br><br>
+          <strong>Color Legend:</strong><br>
+          • <span style="color:#22c55e">■ 0-20%</span> — Bargain (historically very cheap)<br>
+          • <span style="color:#84cc16">■ 20-40%</span> — Modest (below average)<br>
+          • <span style="color:#eab308">■ 40-60%</span> — Fair (around average)<br>
+          • <span style="color:#f97316">■ 60-80%</span> — Pricy (above average)<br>
+          • <span style="color:#ef4444">■ 80-100%</span> — Inflated (historically very expensive)<br><br>
+          <em>Excludes Aliens, Apes, Zombies, Hoodies, Beanies, 1/7-trait punks, and top 10% rarest.</em>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      Data: Etherscan V2 API • Binance API<br>
+      <a href="https://x.com/DoggfatherCrew" target="_blank">@DoggfatherCrew</a>
+      <div class="last-updated" id="last-updated"></div>
+    </div>
+  </div>
+
+  <script>
+    let chartInstance = null;
+
+    async function loadData() {
+      try {
+        const response = await fetch('/api/data');
+        const result = await response.json();
+
+        if (!result.success || !result.data || result.data.length === 0) {
+          throw new Error('No data available');
+        }
+
+        renderResults(result.data);
+
+        if (result.meta?.lastSync) {
+          const lastSync = new Date(result.meta.lastSync);
+          document.getElementById('last-updated').textContent = 
+            `Last updated: ${lastSync.toLocaleString()}`;
+        }
+      } catch (error) {
+        console.error('Error loading data:', error);
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error-state').style.display = 'block';
+      }
+    }
+
+    function renderResults(weeklyData) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('stats-grid').style.display = 'grid';
+      document.getElementById('chart-area').style.display = 'block';
+      document.getElementById('bottom-row').style.display = 'grid';
+
+      const ratios = weeklyData.map(w => w.ratio).filter(r => r > 0);
+      const currentRatio = ratios[ratios.length - 1] || 0;
+      const athRatio = Math.max(...ratios);
+      const atlRatio = Math.min(...ratios);
+      const avgRatio = ratios.reduce((a, b) => a + b, 0) / ratios.length;
+
+      const lowerCount = ratios.filter(r => r < currentRatio).length;
+      const percentile = (lowerCount / ratios.length) * 100;
+      const percentileRounded = Math.round(percentile * 10) / 10;
+
+      document.getElementById('current-ratio').textContent = currentRatio.toFixed(3);
+      document.getElementById('ath-ratio').textContent = athRatio.toFixed(3);
+      document.getElementById('atl-ratio').textContent = atlRatio.toFixed(3);
+      document.getElementById('avg-ratio').textContent = avgRatio.toFixed(3);
+      document.getElementById('weeks-count').textContent = weeklyData.length;
+
+      const needleRotation = -90 + (percentileRounded * 1.8);
+      document.getElementById('gauge-needle').setAttribute('transform', `rotate(${needleRotation}, 100, 100)`);
+      
+      const gaugeValue = document.getElementById('gauge-value');
+      gaugeValue.textContent = percentileRounded.toFixed(1) + '%';
+      gaugeValue.classList.remove('bargain', 'modest', 'fair', 'pricy', 'inflated');
+      
+      if (percentileRounded <= 20) {
+        gaugeValue.classList.add('bargain');
+      } else if (percentileRounded <= 40) {
+        gaugeValue.classList.add('modest');
+      } else if (percentileRounded <= 60) {
+        gaugeValue.classList.add('fair');
+      } else if (percentileRounded <= 80) {
+        gaugeValue.classList.add('pricy');
+      } else {
+        gaugeValue.classList.add('inflated');
+      }
+
+      renderChart(weeklyData, ratios);
+    }
+
+    function renderChart(weeklyData, allRatios) {
+      if (chartInstance) chartInstance.destroy();
+
+      const ctx = document.getElementById('mainChart').getContext('2d');
+
+      const ratioData = weeklyData
+        .filter(w => w.ratio > 0)
+        .map(w => {
+          const lowerCount = allRatios.filter(r => r < w.ratio).length;
+          const percentile = (lowerCount / allRatios.length) * 100;
+          return { 
+            x: w.week_start, 
+            y: w.ratio, 
+            salesCount: w.sales_count,
+            percentile: percentile
+          };
+        });
+
+      const avgRatio = ratioData.reduce((sum, d) => sum + d.y, 0) / ratioData.length;
+
+      function getColorForPercentile(pct) {
+        if (pct <= 20) return '#22c55e';
+        if (pct <= 40) return '#84cc16';
+        if (pct <= 60) return '#eab308';
+        if (pct <= 80) return '#f97316';
+        return '#ef4444';
+      }
+
+      function getColorForPercentileAlpha(pct, alpha) {
+        if (pct <= 20) return `rgba(34, 197, 94, ${alpha})`;
+        if (pct <= 40) return `rgba(132, 204, 22, ${alpha})`;
+        if (pct <= 60) return `rgba(234, 179, 8, ${alpha})`;
+        if (pct <= 80) return `rgba(249, 115, 22, ${alpha})`;
+        return `rgba(239, 68, 68, ${alpha})`;
+      }
+
+      const segmentColors = ratioData.map(d => getColorForPercentile(d.percentile));
+      const segmentColorsAlpha = ratioData.map(d => getColorForPercentileAlpha(d.percentile, 0.4));
+
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          datasets: [
+            {
+              label: 'Punk/BTC Ratio',
+              data: ratioData,
+              segment: {
+                borderColor: ctx => segmentColors[ctx.p0DataIndex] || '#a78bfa',
+                backgroundColor: ctx => segmentColorsAlpha[ctx.p0DataIndex] || 'rgba(167, 139, 250, 0.3)'
+              },
+              borderColor: segmentColors,
+              backgroundColor: function(context) {
+                const chart = context.chart;
+                const {ctx: canvasCtx, chartArea} = chart;
+                if (!chartArea) return 'rgba(167, 139, 250, 0.2)';
+                
+                const gradient = canvasCtx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                gradient.addColorStop(0, 'rgba(34, 197, 94, 0.3)');
+                gradient.addColorStop(0.25, 'rgba(132, 204, 22, 0.3)');
+                gradient.addColorStop(0.5, 'rgba(234, 179, 8, 0.3)');
+                gradient.addColorStop(0.75, 'rgba(249, 115, 22, 0.3)');
+                gradient.addColorStop(1, 'rgba(239, 68, 68, 0.3)');
+                return gradient;
+              },
+              fill: true,
+              tension: 0.1,
+              borderWidth: 2,
+              pointRadius: 3,
+              pointHoverRadius: 6,
+              pointBackgroundColor: segmentColors,
+              pointBorderColor: segmentColors,
+            },
+            {
+              label: 'Average',
+              data: ratioData.map(d => ({ x: d.x, y: avgRatio })),
+              borderColor: 'rgba(148, 163, 184, 0.5)',
+              borderWidth: 1,
+              borderDash: [5, 5],
+              pointRadius: 0,
+              fill: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { intersect: false, mode: 'index' },
+          scales: {
+            x: {
+              type: 'time',
+              time: { unit: 'month', displayFormats: { month: 'MMM \'yy' } },
+              grid: { color: 'rgba(255, 255, 255, 0.05)' },
+              ticks: { color: '#64748b' },
+              title: { display: true, text: 'Date', color: '#94a3b8' }
+            },
+            y: {
+              grid: { color: 'rgba(255, 255, 255, 0.05)' },
+              ticks: { color: '#64748b' },
+              title: { display: true, text: 'Punk USD / BTC USD', color: '#94a3b8' },
+              beginAtZero: true
+            }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(15, 15, 26, 0.95)',
+              titleColor: '#f8fafc',
+              bodyColor: '#e2e8f0',
+              borderColor: 'rgba(255, 255, 255, 0.1)',
+              borderWidth: 1,
+              padding: 12,
+              callbacks: {
+                title: function(items) {
+                  if (items[0]) {
+                    return new Date(items[0].parsed.x).toLocaleDateString('en-US', { 
+                      year: 'numeric', month: 'short', day: 'numeric' 
+                    });
+                  }
+                  return '';
+                },
+                label: function(context) {
+                  if (context.datasetIndex === 1) return `Average: ${context.parsed.y.toFixed(3)}`;
+                  const point = context.raw;
+                  const pctLabel = point.percentile.toFixed(1);
+                  return [
+                    `Ratio: ${context.parsed.y.toFixed(3)}`,
+                    `Percentile: ${pctLabel}%`,
+                    `Sales: ${point.salesCount}`
+                  ];
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Load data on page load
+    loadData();
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-adapter-date-fns/3.0.0/chartjs-adapter-date-fns.bundle.min.js"></script>
+</body>
+</html>
