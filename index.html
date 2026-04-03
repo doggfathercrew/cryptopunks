@@ -52,6 +52,28 @@
     .chart-subtitle { font-size: 13px; color: #94a3b8; margin-top: 4px; }
     .chart-wrapper { position: relative; height: 450px; }
     
+    .time-range-selector { display: flex; gap: 8px; }
+    .time-range-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 8px 16px;
+      color: #94a3b8;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .time-range-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #e2e8f0;
+    }
+    .time-range-btn.active {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: rgba(99, 102, 241, 0.5);
+      color: #a5b4fc;
+    }
+    
     .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px; text-align: center; }
     .spinner { width: 48px; height: 48px; border: 4px solid rgba(255, 255, 255, 0.1); border-top-color: #6366F1; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -124,6 +146,18 @@
     .gauge-value.fair { color: #eab308; }
     .gauge-value.pricy { color: #f97316; }
     .gauge-value.inflated { color: #ef4444; }
+    .gauge-label {
+      font-size: 16px;
+      font-weight: 600;
+      margin-top: 8px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .gauge-label.bargain { color: #22c55e; }
+    .gauge-label.modest { color: #84cc16; }
+    .gauge-label.fair { color: #eab308; }
+    .gauge-label.pricy { color: #f97316; }
+    .gauge-label.inflated { color: #ef4444; }
     
     .footer { text-align: center; margin-top: 40px; padding-top: 24px; border-top: 1px solid rgba(255, 255, 255, 0.1); color: #64748b; font-size: 13px; }
     .footer a { color: #a5b4fc; text-decoration: none; transition: color 0.2s; }
@@ -183,6 +217,10 @@
             <div class="chart-title">Weekly Median Punk / BTC Ratio</div>
             <div class="chart-subtitle">Non-rare punk median sale price (USD) ÷ BTC price (USD)</div>
           </div>
+          <div class="time-range-selector">
+            <button class="time-range-btn" data-range="1Y">1Y</button>
+            <button class="time-range-btn active" data-range="ALL">All</button>
+          </div>
         </div>
         
         <div class="chart-wrapper">
@@ -224,6 +262,7 @@
         
         <div class="gauge-value-container">
           <div class="gauge-value" id="gauge-value">—</div>
+          <div class="gauge-label" id="gauge-label">—</div>
         </div>
       </div>
 
@@ -252,6 +291,9 @@
 
   <script>
     let chartInstance = null;
+    let fullWeeklyData = [];
+    let fullRatios = [];
+    let currentRange = 'ALL';
 
     async function loadData() {
       try {
@@ -282,7 +324,11 @@
       document.getElementById('chart-area').style.display = 'block';
       document.getElementById('bottom-row').style.display = 'grid';
 
-      const ratios = weeklyData.map(w => w.ratio).filter(r => r > 0);
+      // Store full data globally
+      fullWeeklyData = weeklyData;
+      fullRatios = weeklyData.map(w => w.ratio).filter(r => r > 0);
+      
+      const ratios = fullRatios;
       const currentRatio = ratios[ratios.length - 1] || 0;
       const athRatio = Math.max(...ratios);
       const atlRatio = Math.min(...ratios);
@@ -302,22 +348,59 @@
       document.getElementById('gauge-needle').setAttribute('transform', `rotate(${needleRotation}, 100, 100)`);
       
       const gaugeValue = document.getElementById('gauge-value');
+      const gaugeLabel = document.getElementById('gauge-label');
       gaugeValue.textContent = percentileRounded.toFixed(1) + '%';
       gaugeValue.classList.remove('bargain', 'modest', 'fair', 'pricy', 'inflated');
+      gaugeLabel.classList.remove('bargain', 'modest', 'fair', 'pricy', 'inflated');
       
       if (percentileRounded <= 20) {
         gaugeValue.classList.add('bargain');
+        gaugeLabel.classList.add('bargain');
+        gaugeLabel.textContent = 'Bargain';
       } else if (percentileRounded <= 40) {
         gaugeValue.classList.add('modest');
+        gaugeLabel.classList.add('modest');
+        gaugeLabel.textContent = 'Modest';
       } else if (percentileRounded <= 60) {
         gaugeValue.classList.add('fair');
+        gaugeLabel.classList.add('fair');
+        gaugeLabel.textContent = 'Fair';
       } else if (percentileRounded <= 80) {
         gaugeValue.classList.add('pricy');
+        gaugeLabel.classList.add('pricy');
+        gaugeLabel.textContent = 'Pricy';
       } else {
         gaugeValue.classList.add('inflated');
+        gaugeLabel.classList.add('inflated');
+        gaugeLabel.textContent = 'Inflated';
       }
 
-      renderChart(weeklyData, ratios);
+      // Set up time range button listeners
+      document.querySelectorAll('.time-range-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.time-range-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          currentRange = btn.dataset.range;
+          renderChartWithRange(currentRange);
+        });
+      });
+
+      renderChartWithRange(currentRange);
+    }
+
+    function filterDataByRange(data, range) {
+      if (range === 'ALL') return data;
+      
+      const now = Date.now();
+      const oneYear = 365 * 24 * 60 * 60 * 1000;
+      const cutoff = now - oneYear;
+      
+      return data.filter(w => w.week_start >= cutoff);
+    }
+
+    function renderChartWithRange(range) {
+      const filteredData = filterDataByRange(fullWeeklyData, range);
+      renderChart(filteredData, fullRatios);
     }
 
     function renderChart(weeklyData, allRatios) {
