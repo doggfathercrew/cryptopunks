@@ -130,14 +130,26 @@ export default async function handler(req, res) {
         const mergedMedian = (existing.median_punk_usd * existing.sales_count + newMedian * newCount) / totalCount;
         const { error: updateError } = await supabase
           .from('weekly_ratios')
-          .update({ median_punk_usd: mergedMedian, median_btc_usd: btcPrice, ratio: mergedMedian / btcPrice, sales_count: totalCount, updated_at: new Date().toISOString() })
+          .update({ 
+            median_punk_usd: Math.round(mergedMedian * 100) / 100, 
+            median_btc_usd: Math.round(btcPrice * 100) / 100, 
+            ratio: Math.round((mergedMedian / btcPrice) * 100000000) / 100000000, 
+            sales_count: totalCount, 
+            updated_at: new Date().toISOString() 
+          })
           .eq('week_start', weekStartNum);
         if (updateError) errors.push(`Update: ${updateError.message}`);
         else weeksUpdated++;
       } else {
         const { error: insertError } = await supabase
           .from('weekly_ratios')
-          .insert({ week_start: weekStartNum, median_punk_usd: newMedian, median_btc_usd: btcPrice, ratio: newMedian / btcPrice, sales_count: newCount });
+          .insert({ 
+            week_start: weekStartNum, 
+            median_punk_usd: Math.round(newMedian * 100) / 100, 
+            median_btc_usd: Math.round(btcPrice * 100) / 100, 
+            ratio: Math.round((newMedian / btcPrice) * 100000000) / 100000000, 
+            sales_count: newCount 
+          });
         if (insertError) errors.push(`Insert: ${insertError.message}`);
         else weeksUpdated++;
       }
