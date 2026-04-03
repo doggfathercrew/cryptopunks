@@ -1,4 +1,3 @@
-// claude code
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -110,16 +109,30 @@ export default async function handler(req, res) {
     const weeksWithSales = Object.keys(weeklyGroups).map(w => ({
       weekStart: parseInt(w),
       weekDate: new Date(parseInt(w)).toISOString().split('T')[0],
-      salesCount: weeklyGroups[w].length
+      salesCount: weeklyGroups[w].length,
+      prices: weeklyGroups[w]
     }));
 
     let weeksUpdated = 0;
     const errors = [];
+    const debugValues = [];
     
     for (const [weekStart, prices] of Object.entries(weeklyGroups)) {
       const weekStartNum = parseInt(weekStart);
       const newMedian = median(prices);
       const newCount = prices.length;
+      
+      // Calculate the values we would insert
+      const insertValues = {
+        week_start: weekStartNum,
+        median_punk_usd: Math.round(newMedian * 100) / 100,
+        median_btc_usd: Math.round(btcPrice * 100) / 100,
+        ratio: Math.round((newMedian / btcPrice) * 100000000) / 100000000,
+        sales_count: newCount,
+        raw_median: newMedian,
+        raw_btc: btcPrice
+      };
+      debugValues.push(insertValues);
 
       const { data: existing, error: selectError } = await supabase
         .from('weekly_ratios').select('*').eq('week_start', weekStartNum).maybeSingle();
@@ -163,7 +176,7 @@ export default async function handler(req, res) {
 
     res.status(200).json({
       success: true, blocksProcessed: currentBlock - lastBlock, salesFound: sales.length,
-      weeksWithSales, weeksUpdated, errors: errors.length > 0 ? errors : undefined,
+      weeksWithSales, weeksUpdated, debugValues, errors: errors.length > 0 ? errors : undefined,
       lastBlock: currentBlock, btcPrice: btcPrice.toFixed(2), ethPrice: ethPrice.toFixed(2)
     });
 
