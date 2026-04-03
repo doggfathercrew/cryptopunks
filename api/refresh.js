@@ -93,10 +93,17 @@ export default async function handler(req, res) {
       for (const log of logsData.result) {
         const punkId = parseInt(log.topics[1], 16);
         if (rareSet.has(punkId)) continue;
-        const priceWei = BigInt(log.topics[3]);
+        
+        // Price is in log.data, not log.topics[3]!
+        const priceWei = BigInt(log.data);
         const priceEth = Number(priceWei) / 1e18;
         const timestamp = parseInt(log.timeStamp, 16) * 1000;
-        sales.push({ punkId, timestamp, priceUsd: priceEth * ethPrice, weekStart: getWeekStart(timestamp) });
+        const priceUsd = priceEth * ethPrice;
+        
+        // Skip zero-price sales (transfers, not actual sales)
+        if (priceEth <= 0) continue;
+        
+        sales.push({ punkId, timestamp, priceUsd, weekStart: getWeekStart(timestamp) });
       }
     }
 
@@ -109,30 +116,16 @@ export default async function handler(req, res) {
     const weeksWithSales = Object.keys(weeklyGroups).map(w => ({
       weekStart: parseInt(w),
       weekDate: new Date(parseInt(w)).toISOString().split('T')[0],
-      salesCount: weeklyGroups[w].length,
-      prices: weeklyGroups[w]
+      salesCount: weeklyGroups[w].length
     }));
 
     let weeksUpdated = 0;
     const errors = [];
-    const debugValues = [];
     
     for (const [weekStart, prices] of Object.entries(weeklyGroups)) {
       const weekStartNum = parseInt(weekStart);
       const newMedian = median(prices);
       const newCount = prices.length;
-      
-      // Calculate the values we would insert
-      const insertValues = {
-        week_start: weekStartNum,
-        median_punk_usd: Math.round(newMedian * 100) / 100,
-        median_btc_usd: Math.round(btcPrice * 100) / 100,
-        ratio: Math.round((newMedian / btcPrice) * 100000000) / 100000000,
-        sales_count: newCount,
-        raw_median: newMedian,
-        raw_btc: btcPrice
-      };
-      debugValues.push(insertValues);
 
       const { data: existing, error: selectError } = await supabase
         .from('weekly_ratios').select('*').eq('week_start', weekStartNum).maybeSingle();
@@ -176,7 +169,7 @@ export default async function handler(req, res) {
 
     res.status(200).json({
       success: true, blocksProcessed: currentBlock - lastBlock, salesFound: sales.length,
-      weeksWithSales, weeksUpdated, debugValues, errors: errors.length > 0 ? errors : undefined,
+      weeksWithSales, weeksUpdated, errors: errors.length > 0 ? errors : undefined,
       lastBlock: currentBlock, btcPrice: btcPrice.toFixed(2), ethPrice: ethPrice.toFixed(2)
     });
 
