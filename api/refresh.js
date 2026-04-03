@@ -28,12 +28,9 @@ function median(arr) {
 }
 
 export default async function handler(req, res) {
-  // Auth check - support both manual calls and Vercel cron
   const authHeader = req.headers.authorization;
   const cronSecret = process.env.CRON_SECRET;
   const isVercelCron = req.headers['x-vercel-cron'] === '1';
-  
-  // Allow if: Vercel cron, or correct Bearer token, or secret in query
   const querySecret = req.query.secret;
   const isAuthorized = isVercelCron || 
     (cronSecret && authHeader === `Bearer ${cronSecret}`) ||
@@ -44,16 +41,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1. Get last synced block
     const { data: statusData } = await supabase
-      .from('sync_status')
-      .select('value')
-      .eq('key', 'last_block')
-      .single();
-
+      .from('sync_status').select('value').eq('key', 'last_block').single();
     const lastBlock = parseInt(statusData?.value || '24707009');
 
-    // 2. Get current block from Etherscan
     const blockResp = await fetch(
       `${ETHERSCAN_V2_BASE}&module=proxy&action=eth_blockNumber&apikey=${ETHERSCAN_API_KEY}`
     );
@@ -61,26 +52,16 @@ export default async function handler(req, res) {
     const currentBlock = parseInt(blockData.result, 16);
 
     if (lastBlock >= currentBlock) {
-      return res.status(200).json({ 
-        success: true, 
-        message: 'Already up to date', 
-        lastBlock 
-      });
+      return res.status(200).json({ success: true, message: 'Already up to date', lastBlock });
     }
 
-    // 3. Fetch new punk sales from Etherscan
     const logsUrl = `${ETHERSCAN_V2_BASE}&module=logs&action=getLogs` +
-      `&address=${CRYPTOPUNKS_CONTRACT}` +
-      `&topic0=${PUNK_BOUGHT_TOPIC}` +
-      `&fromBlock=${lastBlock + 1}&toBlock=${currentBlock}` +
-      `&apikey=${ETHERSCAN_API_KEY}`;
-
+      `&address=${CRYPTOPUNKS_CONTRACT}&topic0=${PUNK_BOUGHT_TOPIC}` +
+      `&fromBlock=${lastBlock + 1}&toBlock=${currentBlock}&apikey=${ETHERSCAN_API_KEY}`;
     const logsResp = await fetch(logsUrl);
     const logsData = await logsResp.json();
 
-    // 4. Get current prices - try CoinGecko first (more reliable from serverless)
     let btcPrice, ethPrice;
-    
     try {
       const priceResp = await fetch(
         'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd'
@@ -88,132 +69,89 @@ export default async function handler(req, res) {
       const priceData = await priceResp.json();
       btcPrice = priceData.bitcoin?.usd;
       ethPrice = priceData.ethereum?.usd;
-    } catch (e) {
-      console.log('CoinGecko failed, trying Binance...');
-    }
+    } catch (e) {}
     
-    // Fallback to Binance if CoinGecko failed
     if (!btcPrice || !ethPrice) {
       const [btcResp, ethResp] = await Promise.all([
         fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT'),
         fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT')
       ]);
-      const btcData = await btcResp.json();
-      const ethData = await ethResp.json();
-      btcPrice = parseFloat(btcData.price);
-      ethPrice = parseFloat(ethData.price);
+      btcPrice = parseFloat((await btcResp.json()).price);
+      ethPrice = parseFloat((await ethResp.json()).price);
     }
     
-    // Validate prices
     if (!btcPrice || !ethPrice || isNaN(btcPrice) || isNaN(ethPrice)) {
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Failed to fetch prices from any source' 
-      });
+      return res.status(500).json({ success: false, error: 'Failed to fetch prices' });
     }
 
-    // 5. Get rare punk IDs from database
     const { data: rarePunks } = await supabase
-      .from('punk_rarity')
-      .select('punk_id')
-      .eq('is_rare', true);
-    
+      .from('punk_rarity').select('punk_id').eq('is_rare', true);
     const rareSet = new Set(rarePunks?.map(p => p.punk_id) || []);
 
-    // 6. Parse sales and filter out rare punks
     const sales = [];
     if (logsData.status === '1' && logsData.result?.length > 0) {
       for (const log of logsData.result) {
         const punkId = parseInt(log.topics[1], 16);
-        
-        // Skip rare punks
         if (rareSet.has(punkId)) continue;
-        
         const priceWei = BigInt(log.topics[3]);
         const priceEth = Number(priceWei) / 1e18;
         const timestamp = parseInt(log.timeStamp, 16) * 1000;
-        const priceUsd = priceEth * ethPrice;
-
-        sales.push({
-          punkId,
-          timestamp,
-          priceEth,
-          priceUsd,
-          weekStart: getWeekStart(timestamp)
-        });
+        sales.push({ punkId, timestamp, priceUsd: priceEth * ethPrice, weekStart: getWeekStart(timestamp) });
       }
     }
 
-    // 7. Group sales by week
     const weeklyGroups = {};
     for (const sale of sales) {
-      if (!weeklyGroups[sale.weekStart]) {
-        weeklyGroups[sale.weekStart] = [];
-      }
+      if (!weeklyGroups[sale.weekStart]) weeklyGroups[sale.weekStart] = [];
       weeklyGroups[sale.weekStart].push(sale.priceUsd);
     }
+    
+    const weeksWithSales = Object.keys(weeklyGroups).map(w => ({
+      weekStart: parseInt(w),
+      weekDate: new Date(parseInt(w)).toISOString().split('T')[0],
+      salesCount: weeklyGroups[w].length
+    }));
 
-    // 8. Update weekly_ratios for each affected week
     let weeksUpdated = 0;
+    const errors = [];
+    
     for (const [weekStart, prices] of Object.entries(weeklyGroups)) {
       const weekStartNum = parseInt(weekStart);
       const newMedian = median(prices);
       const newCount = prices.length;
 
-      // Check if week exists
-      const { data: existing } = await supabase
-        .from('weekly_ratios')
-        .select('*')
-        .eq('week_start', weekStartNum)
-        .single();
+      const { data: existing, error: selectError } = await supabase
+        .from('weekly_ratios').select('*').eq('week_start', weekStartNum).maybeSingle();
+
+      if (selectError) { errors.push(`Select: ${selectError.message}`); continue; }
 
       if (existing) {
-        // Merge with existing data (weighted average for simplicity)
         const totalCount = existing.sales_count + newCount;
         const mergedMedian = (existing.median_punk_usd * existing.sales_count + newMedian * newCount) / totalCount;
-        const mergedRatio = mergedMedian / btcPrice;
-
-        await supabase
+        const { error: updateError } = await supabase
           .from('weekly_ratios')
-          .update({
-            median_punk_usd: mergedMedian,
-            median_btc_usd: btcPrice,
-            ratio: mergedRatio,
-            sales_count: totalCount,
-            updated_at: new Date().toISOString()
-          })
+          .update({ median_punk_usd: mergedMedian, median_btc_usd: btcPrice, ratio: mergedMedian / btcPrice, sales_count: totalCount, updated_at: new Date().toISOString() })
           .eq('week_start', weekStartNum);
+        if (updateError) errors.push(`Update: ${updateError.message}`);
+        else weeksUpdated++;
       } else {
-        // Insert new week
-        await supabase
+        const { error: insertError } = await supabase
           .from('weekly_ratios')
-          .insert({
-            week_start: weekStartNum,
-            median_punk_usd: newMedian,
-            median_btc_usd: btcPrice,
-            ratio: newMedian / btcPrice,
-            sales_count: newCount
-          });
+          .insert({ week_start: weekStartNum, median_punk_usd: newMedian, median_btc_usd: btcPrice, ratio: newMedian / btcPrice, sales_count: newCount });
+        if (insertError) errors.push(`Insert: ${insertError.message}`);
+        else weeksUpdated++;
       }
-      weeksUpdated++;
     }
 
-    // 9. Update sync status
-    await supabase
-      .from('sync_status')
-      .upsert([
-        { key: 'last_block', value: currentBlock.toString(), updated_at: new Date().toISOString() },
-        { key: 'last_sync', value: Date.now().toString(), updated_at: new Date().toISOString() }
-      ], { onConflict: 'key' });
+    await supabase.from('sync_status').upsert([
+      { key: 'last_block', value: currentBlock.toString(), updated_at: new Date().toISOString() },
+      { key: 'last_sync', value: Date.now().toString(), updated_at: new Date().toISOString() }
+    ], { onConflict: 'key' });
 
     res.status(200).json({
-      success: true,
-      blocksProcessed: currentBlock - lastBlock,
-      salesFound: sales.length,
-      weeksUpdated,
-      lastBlock: currentBlock,
-      btcPrice: btcPrice.toFixed(2),
-      ethPrice: ethPrice.toFixed(2)
+      success: true, blocksProcessed: currentBlock - lastBlock, salesFound: sales.length,
+      weeksWithSales, weeksUpdated, errors: errors.length > 0 ? errors : undefined,
+      lastBlock: currentBlock, btcPrice: btcPrice.toFixed(2), ethPrice: ethPrice.toFixed(2)
     });
 
   } catch (error) {
