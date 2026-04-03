@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CryptoPunk / Bitcoin Ratio</title>
-  <meta name="description" content="Track the valuation of non-rare CryptoPunks relative to Bitcoin over time">
+  <title>CryptoPunk USD Price</title>
+  <meta name="description" content="Track the median price of non-rare CryptoPunks in USD over time">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
   <style>
@@ -175,13 +175,13 @@
 <body>
   <div class="container">
     <div class="header">
-      <h1>CryptoPunk / Bitcoin Ratio</h1>
-      <div style="margin-top: 12px;"><a href="/usd.html" style="color: #a5b4fc; text-decoration: none; font-size: 14px;">View USD Price →</a></div>
+      <h1>CryptoPunk USD Price</h1>
+      <div style="margin-top: 12px;"><a href="/" style="color: #a5b4fc; text-decoration: none; font-size: 14px;">← View BTC Ratio</a></div>
     </div>
 
     <div id="stats-grid" class="stats-grid" style="display: none;">
       <div class="stat-card">
-        <div class="stat-label">Current Ratio</div>
+        <div class="stat-label">Current Price</div>
         <div class="stat-value" id="current-ratio">—</div>
       </div>
       <div class="stat-card">
@@ -215,8 +215,8 @@
       <div id="chart-area" style="display: none;">
         <div class="chart-header">
           <div>
-            <div class="chart-title">Weekly Median Punk / BTC Ratio</div>
-            <div class="chart-subtitle">Non-rare punk median sale price (USD) ÷ BTC price (USD)</div>
+            <div class="chart-title">Weekly Median Punk Price (USD)</div>
+            <div class="chart-subtitle">Non-rare punk median sale price in US dollars</div>
           </div>
           <div class="time-range-selector">
             <button class="time-range-btn" data-range="1Y">1Y</button>
@@ -270,8 +270,8 @@
       <div id="insight" class="insight-box">
         <div class="insight-title">📊 How to Read This Chart</div>
         <div class="insight-text">
-          The <strong>Punk/BTC Ratio</strong> shows how expensive a median non-rare CryptoPunk is relative to Bitcoin.<br><br>
-          <strong>Percentile:</strong> What % of all weeks since Oct 2021 had a lower ratio.<br><br>
+          The <strong>USD Price</strong> shows the median sale price of non-rare CryptoPunks in US dollars.<br><br>
+          <strong>Percentile:</strong> What % of all weeks since Oct 2021 had a lower price.<br><br>
           <strong>Color Legend:</strong><br>
           • <span style="color:#22c55e">■ 0-20%</span> — Bargain (historically very cheap)<br>
           • <span style="color:#84cc16">■ 20-40%</span> — Modest (below average)<br>
@@ -325,24 +325,27 @@
       document.getElementById('chart-area').style.display = 'block';
       document.getElementById('bottom-row').style.display = 'grid';
 
-      // Store full data globally
+      // Store full data globally - use median_punk_usd instead of ratio
       fullWeeklyData = weeklyData;
-      fullRatios = weeklyData.map(w => w.ratio).filter(r => r > 0);
+      fullRatios = weeklyData.map(w => w.median_punk_usd).filter(p => p > 0);
       
-      const ratios = fullRatios;
-      const currentRatio = ratios[ratios.length - 1] || 0;
-      const athRatio = Math.max(...ratios);
-      const atlRatio = Math.min(...ratios);
-      const avgRatio = ratios.reduce((a, b) => a + b, 0) / ratios.length;
+      const prices = fullRatios;
+      const currentPrice = prices[prices.length - 1] || 0;
+      const athPrice = Math.max(...prices);
+      const atlPrice = Math.min(...prices);
+      const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
 
-      const lowerCount = ratios.filter(r => r < currentRatio).length;
-      const percentile = (lowerCount / ratios.length) * 100;
+      const lowerCount = prices.filter(p => p < currentPrice).length;
+      const percentile = (lowerCount / prices.length) * 100;
       const percentileRounded = Math.round(percentile * 10) / 10;
 
-      document.getElementById('current-ratio').textContent = currentRatio.toFixed(3);
-      document.getElementById('ath-ratio').textContent = athRatio.toFixed(3);
-      document.getElementById('atl-ratio').textContent = atlRatio.toFixed(3);
-      document.getElementById('avg-ratio').textContent = avgRatio.toFixed(3);
+      // Format as USD
+      const formatUSD = (val) => '$' + val.toLocaleString('en-US', { maximumFractionDigits: 0 });
+      
+      document.getElementById('current-ratio').textContent = formatUSD(currentPrice);
+      document.getElementById('ath-ratio').textContent = formatUSD(athPrice);
+      document.getElementById('atl-ratio').textContent = formatUSD(atlPrice);
+      document.getElementById('avg-ratio').textContent = formatUSD(avgPrice);
       document.getElementById('weeks-count').textContent = weeklyData.length;
 
       const needleRotation = -90 + (percentileRounded * 1.8);
@@ -404,12 +407,12 @@
       renderChart(filteredData, fullRatios);
     }
 
-    function renderChart(weeklyData, allRatios) {
+    function renderChart(weeklyData, allPrices) {
       if (chartInstance) chartInstance.destroy();
 
       const ctx = document.getElementById('mainChart').getContext('2d');
 
-      const filteredData = weeklyData.filter(w => w.ratio > 0);
+      const filteredData = weeklyData.filter(w => w.median_punk_usd > 0);
       
       // Create labels and data
       const labels = filteredData.map(w => {
@@ -417,15 +420,15 @@
         return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
       });
       
-      const ratioValues = filteredData.map(w => w.ratio);
+      const priceValues = filteredData.map(w => w.median_punk_usd);
       
       // Calculate percentiles for colors
       const percentiles = filteredData.map(w => {
-        const lowerCount = allRatios.filter(r => r < w.ratio).length;
-        return (lowerCount / allRatios.length) * 100;
+        const lowerCount = allPrices.filter(p => p < w.median_punk_usd).length;
+        return (lowerCount / allPrices.length) * 100;
       });
 
-      const avgRatio = ratioValues.reduce((sum, r) => sum + r, 0) / ratioValues.length;
+      const avgPrice = priceValues.reduce((sum, p) => sum + p, 0) / priceValues.length;
 
       function getColorForPercentile(pct) {
         if (pct <= 20) return '#22c55e';
@@ -443,8 +446,8 @@
           labels: labels,
           datasets: [
             {
-              label: 'Punk/BTC Ratio',
-              data: ratioValues,
+              label: 'Punk Price (USD)',
+              data: priceValues,
               borderColor: '#a78bfa',
               backgroundColor: 'rgba(167, 139, 250, 0.2)',
               fill: true,
@@ -460,7 +463,7 @@
             },
             {
               label: 'Average',
-              data: new Array(ratioValues.length).fill(avgRatio),
+              data: new Array(priceValues.length).fill(avgPrice),
               borderColor: 'rgba(148, 163, 184, 0.5)',
               borderWidth: 1,
               borderDash: [5, 5],
@@ -484,9 +487,14 @@
             },
             y: {
               grid: { color: 'rgba(255, 255, 255, 0.05)' },
-              ticks: { color: '#64748b' },
-              title: { display: true, text: 'Punk USD / BTC USD', color: '#94a3b8' },
-              beginAtZero: true
+              ticks: { 
+                color: '#64748b',
+                callback: function(value) {
+                  return '$' + value.toLocaleString();
+                }
+              },
+              title: { display: true, text: 'Price (USD)', color: '#94a3b8' },
+              beginAtZero: false
             }
           },
           plugins: {
@@ -501,11 +509,11 @@
               callbacks: {
                 label: function(context) {
                   const idx = context.dataIndex;
-                  if (context.datasetIndex === 1) return `Average: ${context.parsed.y.toFixed(3)}`;
+                  if (context.datasetIndex === 1) return `Average: $${context.parsed.y.toLocaleString()}`;
                   const pct = percentiles[idx].toFixed(1);
                   const sales = filteredData[idx].sales_count;
                   return [
-                    `Ratio: ${context.parsed.y.toFixed(3)}`,
+                    `Price: $${context.parsed.y.toLocaleString()}`,
                     `Percentile: ${pct}%`,
                     `Sales: ${sales}`
                   ];
