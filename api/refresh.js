@@ -78,15 +78,39 @@ export default async function handler(req, res) {
     const logsResp = await fetch(logsUrl);
     const logsData = await logsResp.json();
 
-    // 4. Get current prices from Binance
-    const [btcResp, ethResp] = await Promise.all([
-      fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT'),
-      fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT')
-    ]);
-    const btcData = await btcResp.json();
-    const ethData = await ethResp.json();
-    const btcPrice = parseFloat(btcData.price);
-    const ethPrice = parseFloat(ethData.price);
+    // 4. Get current prices - try CoinGecko first (more reliable from serverless)
+    let btcPrice, ethPrice;
+    
+    try {
+      const priceResp = await fetch(
+        'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd'
+      );
+      const priceData = await priceResp.json();
+      btcPrice = priceData.bitcoin?.usd;
+      ethPrice = priceData.ethereum?.usd;
+    } catch (e) {
+      console.log('CoinGecko failed, trying Binance...');
+    }
+    
+    // Fallback to Binance if CoinGecko failed
+    if (!btcPrice || !ethPrice) {
+      const [btcResp, ethResp] = await Promise.all([
+        fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT'),
+        fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT')
+      ]);
+      const btcData = await btcResp.json();
+      const ethData = await ethResp.json();
+      btcPrice = parseFloat(btcData.price);
+      ethPrice = parseFloat(ethData.price);
+    }
+    
+    // Validate prices
+    if (!btcPrice || !ethPrice || isNaN(btcPrice) || isNaN(ethPrice)) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Failed to fetch prices from any source' 
+      });
+    }
 
     // 5. Get rare punk IDs from database
     const { data: rarePunks } = await supabase
